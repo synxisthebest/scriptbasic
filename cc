@@ -787,7 +787,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 
 local Window = Fluent:CreateWindow({
-    Title = "Tan Dung chim be",
+    Title = "Thien Phuc sibidi",
     SubTitle = "0.01",
     TabWidth = 160,
     Size = UDim2.fromOffset(480, 375),
