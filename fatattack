@@ -26,8 +26,22 @@ local QuestTitle = QuestGui.Container.QuestTitle.Title.Text
 local tickcac = tick()
 local Hookfunction = hookfunction or hookfunc
 local sethiddenproperty = sethiddenproperty or (function(...) return ... end)
+local remote, idremote
+for _, v in next, ({game.ReplicatedStorage.Util, game.ReplicatedStorage.Common, game.ReplicatedStorage.Remotes, game.ReplicatedStorage.Assets, game.ReplicatedStorage.FX}) do
+    for _, n in next, v:GetChildren() do
+        if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+            remote, idremote = n, n:GetAttribute("Id")
+        end
+    end
+    v.ChildAdded:Connect(function(n)
+        if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+            remote, idremote = n, n:GetAttribute("Id")
+        end
+    end)
+end
+
 game:GetService("RunService").Heartbeat:Connect(function()
-    if _G.FastAttack then
+    if _G.FastAttack == true then
         task.defer(function()
             local plr = game.Players.LocalPlayer
             local char = plr.Character
