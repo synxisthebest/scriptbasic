@@ -66,12 +66,13 @@ local PosMobCake = CFrame.new(0, 0, 0)
 local PosMobBone = CFrame.new(0, 0, 0)
 local CurrentSelectWP = "Melee"
 
+-- Fix nhận diện Sea chuẩn theo PlaceId và Map đặc trưng
 local taodangosea1 = (game.PlaceId == 2753915549)
 local taodangosea2 = (game.PlaceId == 4442272183 or game.PlaceId == 79091703265657)
 local taodangosea3 = (game.PlaceId == 7449423635)
 
 if workspace:FindFirstChild("Map") then
-    if workspace.Map:FindFirstChild("Dressrosa") or workspace.Map:FindFirstChild("Colosseum") or workspace.Map:FindFirstChild("Factory") or workspace.Map:FindFirstChild("Ice") then
+    if workspace.Map:FindFirstChild("Dressrosa") or workspace.Map:FindFirstChild("Colosseum") or workspace.Map:FindFirstChild("Factory") then
         taodangosea2 = true
         taodangosea1 = false
         taodangosea3 = false
@@ -99,32 +100,28 @@ local function RequestWarp(targetVec3)
 end
 
 local CurrentTween = nil
-local CurrentTweenTarget = nil
+local CurrentTargetPos = nil
 
 function Tween(Pos)
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    local hum = char and char:FindFirstChild("Humanoid")
-    if not root or not hum then return end
-
-    if hum.Sit then
-        hum.Sit = false
+    local root = GetRoot()
+    if not root then return end
+    
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") and LocalPlayer.Character.Humanoid.Sit then
+        LocalPlayer.Character.Humanoid.Sit = false
     end
 
-    local Distance = (Pos.Position - root.Position).Magnitude
-
-    if Distance <= 15 or _G.StopTween then
-        if CurrentTween then
-            CurrentTween:Cancel()
-            CurrentTween = nil
+    local distance = (Pos.Position - root.Position).Magnitude
+    if distance <= 15 or _G.StopTween then
+        if CurrentTween then 
+            CurrentTween:Cancel() 
+            CurrentTween = nil 
         end
-        CurrentTweenTarget = nil
+        CurrentTargetPos = nil
         root.CFrame = Pos
         return
     end
 
-    -- Chống spam hủy Tween khi mục tiêu chỉ dịch chuyển rất nhỏ
-    if CurrentTween and CurrentTweenTarget and (CurrentTweenTarget - Pos.Position).Magnitude <= 8 then
+    if CurrentTween and CurrentTargetPos and (CurrentTargetPos - Pos.Position).Magnitude <= 6 then
         return
     end
 
@@ -132,24 +129,19 @@ function Tween(Pos)
         CurrentTween:Cancel()
     end
 
-    CurrentTweenTarget = Pos.Position
-    local speed = 300
-    local tweenTime = Distance / speed
-
-    pcall(function()
-        CurrentTween = TweenService:Create(
-            root,
-            TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),
-            {CFrame = Pos}
-        )
-        CurrentTween.Completed:Connect(function(status)
-            if status == Enum.PlaybackState.Completed then
-                CurrentTweenTarget = nil
-                CurrentTween = nil
-            end
-        end)
-        CurrentTween:Play()
+    CurrentTargetPos = Pos.Position
+    CurrentTween = TweenService:Create(
+        root,
+        TweenInfo.new(distance / 300, Enum.EasingStyle.Linear),
+        {CFrame = Pos}
+    )
+    CurrentTween.Completed:Connect(function(state)
+        if state == Enum.PlaybackState.Completed then
+            CurrentTargetPos = nil
+            CurrentTween = nil
+        end
     end)
+    CurrentTween:Play()
 end
 
 function CancelTween(FUCK)
@@ -159,7 +151,7 @@ function CancelTween(FUCK)
             CurrentTween:Cancel()
             CurrentTween = nil
         end
-        CurrentTweenTarget = nil
+        CurrentTargetPos = nil
         task.wait()
         local root = GetRoot()
         if root and root:FindFirstChild("BodyClip") then
@@ -240,7 +232,6 @@ local V1Melees = {
 }
 local SuperhumanNPCPos = CFrame.new(1185, 477, -6499)
 
--- XOAY VÒNG CÀY MASTERY ĐẾN 450 VÀ CHECK LEVEL CHO DRAGON BREATH
 local function GetCurrentMeleeToFarm()
     local myLevel = (LocalPlayer:FindFirstChild("Data") and LocalPlayer.Data:FindFirstChild("Level")) and LocalPlayer.Data.Level.Value or 1
     local myBeli = (LocalPlayer:FindFirstChild("Data") and LocalPlayer.Data:FindFirstChild("Beli")) and LocalPlayer.Data.Beli.Value or 0
@@ -1526,7 +1517,7 @@ function Checknhiemvu()
             Mob = "Cake Guard"; NumberQuest = 2; NameQuest = "CakeQuest1"; NameMob = "Cake Guard"
             CFrameQuest = CFrame.new(-2021.32007, 37.7982254, -12028.7295, 0.957576931, -8.80302053e-08, 0.288177818, 6.9301187e-08, 1, 7.51931211e-08, -0.288177818, -5.2032135e-08, 0.957576931)
             CFrameMob = CFrame.new(-1598.3070068359375, 43.773197174072266, -12244.5810546875)
-        elseif YourLevel <= 2250 or YourLevel <= 2274 then
+        elseif YourLevel <= 2274 then
             Mob = "Baking Staff"; NumberQuest = 1; NameQuest = "CakeQuest2"; NameMob = "Baking Staff"
             CFrameQuest = CFrame.new(-1927.91602, 37.7981339, -12842.5391, -0.96804446, 4.22142143e-08, 0.250778586, 4.74911062e-08, 1, 1.49904711e-08, -0.250778586, 2.64211941e-08, -0.96804446)
             CFrameMob = CFrame.new(-1887.8099365234375, 77.6185073852539, -12998.3505859375)
@@ -1574,6 +1565,7 @@ function Checknhiemvu()
     end
 end
 
+-- ================= GOM QUÁI (BRING MOB) =================
 task.spawn(function()
     while task.wait(0.2) do
         if _G.BringMob then
@@ -1626,9 +1618,9 @@ task.spawn(function()
     end
 end)
 
--- LUỒNG FARM LEVEL DUY NHẤT ĐÃ ĐƯỢC ĐỒNG BỘ
-spawn(function()
-    while task.wait(0.2) do
+-- ================= LUỒNG AUTO FARM LEVEL (DUY NHẤT & ĐÃ FIX QUEST) =================
+task.spawn(function()
+    while task.wait(0.25) do
         if (_G.LevelFarm or _G.Active_FarmLevel) and not _G.Active_Superhuman and not _G.Active_Sea2 and not _G.Active_AutoRaid then
             pcall(function()
                 Checknhiemvu()
@@ -1704,7 +1696,6 @@ spawn(function()
     end
 end)
 
--- Giữ nguyên function QuestCheck để không bị thiếu hàm của bạn
 function QuestCheck()
     Checknhiemvu()
 end
