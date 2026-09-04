@@ -60,8 +60,10 @@ local function GetCommF()
 end
 
 local sethidprop = sethiddenproperty or (function(...) return ... end)
-local BringMob = false
+local BringMob = true
 local PosMon = CFrame.new(0, 0, 0)
+local PosMobCake = CFrame.new(0, 0, 0)
+local PosMobBone = CFrame.new(0, 0, 0)
 local CurrentSelectWP = "Melee"
 
 local taodangosea1 = (game.PlaceId == 2753915549)
@@ -97,16 +99,32 @@ local function RequestWarp(targetVec3)
 end
 
 local CurrentTween = nil
-local CurrentTargetPos = nil
+local CurrentTweenTarget = nil
 
 function Tween(Pos)
-    local root = GetRoot()
-    if not root then return end
-    
-    local distance = (Pos.Position - root.Position).Magnitude
-    if distance <= 25 then
-        if CurrentTween then CurrentTween:Cancel() CurrentTween = nil end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not root or not hum then return end
+
+    if hum.Sit then
+        hum.Sit = false
+    end
+
+    local Distance = (Pos.Position - root.Position).Magnitude
+
+    if Distance <= 15 or _G.StopTween then
+        if CurrentTween then
+            CurrentTween:Cancel()
+            CurrentTween = nil
+        end
+        CurrentTweenTarget = nil
         root.CFrame = Pos
+        return
+    end
+
+    -- Chống spam hủy Tween khi mục tiêu chỉ dịch chuyển rất nhỏ
+    if CurrentTween and CurrentTweenTarget and (CurrentTweenTarget - Pos.Position).Magnitude <= 8 then
         return
     end
 
@@ -114,14 +132,42 @@ function Tween(Pos)
         CurrentTween:Cancel()
     end
 
-    CurrentTargetPos = Pos.Position
-    -- Tăng tốc độ bay lên (chia cho 450 thay vì 350) để lướt cực nhanh qua đảo
-    CurrentTween = TweenService:Create(
-        root,
-        TweenInfo.new(distance / 450, Enum.EasingStyle.Linear),
-        {CFrame = Pos}
-    )
-    CurrentTween:Play()
+    CurrentTweenTarget = Pos.Position
+    local speed = 300
+    local tweenTime = Distance / speed
+
+    pcall(function()
+        CurrentTween = TweenService:Create(
+            root,
+            TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),
+            {CFrame = Pos}
+        )
+        CurrentTween.Completed:Connect(function(status)
+            if status == Enum.PlaybackState.Completed then
+                CurrentTweenTarget = nil
+                CurrentTween = nil
+            end
+        end)
+        CurrentTween:Play()
+    end)
+end
+
+function CancelTween(FUCK)
+    if not FUCK then
+        _G.StopTween = true
+        if CurrentTween then
+            CurrentTween:Cancel()
+            CurrentTween = nil
+        end
+        CurrentTweenTarget = nil
+        task.wait()
+        local root = GetRoot()
+        if root and root:FindFirstChild("BodyClip") then
+            root:FindFirstChild("BodyClip"):Destroy()
+        end
+        _G.StopTween = false
+        NoClip = false
+    end
 end
 
 local function EquipTool(ToolName)
@@ -810,36 +856,17 @@ task.spawn(function()
 end)
 
 -- ================= FAST ATTACK =================
-local seed
-pcall(function() seed = ReplicatedStorage.Modules.Net.seed:InvokeServer() end)
+local seed = 1
+pcall(function()
+    local netMod = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+    if netMod and netMod:FindFirstChild("seed") then
+        seed = netMod.seed:InvokeServer()
+    end
+end)
+
 local Net = ReplicatedStorage:WaitForChild("Modules", 10) and ReplicatedStorage.Modules:WaitForChild("Net", 10)
 local RegisterAttack = Net and Net:WaitForChild("RE/RegisterAttack", 10)
 local RegisterHit = Net and Net:WaitForChild("RE/RegisterHit", 10)
-
-local remote, idremote
-for _, v in next, ({ReplicatedStorage:FindFirstChild("Util"), ReplicatedStorage:FindFirstChild("Common"), ReplicatedStorage:FindFirstChild("Remotes"), ReplicatedStorage:FindFirstChild("Assets"), ReplicatedStorage:FindFirstChild("FX")}) do
-    if v then
-        for _, n in next, v:GetChildren() do
-            if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
-                remote, idremote = n, n:GetAttribute("Id")
-            end
-        end
-    end
-end
-
-
-_G.FastAttack = true
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
-
-local Net = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net")
-local RegisterAttack = Net:WaitForChild("RE/RegisterAttack")
-local RegisterHit = Net:WaitForChild("RE/RegisterHit")
-
-local seed = 1
-pcall(function() seed = ReplicatedStorage.Modules.Net.seed:InvokeServer() end)
 
 local remote, idremote
 for _, v in ipairs({ReplicatedStorage:FindFirstChild("Util"), ReplicatedStorage:FindFirstChild("Common"), ReplicatedStorage:FindFirstChild("Remotes"), ReplicatedStorage:FindFirstChild("Assets"), ReplicatedStorage:FindFirstChild("FX")}) do
@@ -853,7 +880,7 @@ for _, v in ipairs({ReplicatedStorage:FindFirstChild("Util"), ReplicatedStorage:
 end
 
 RunService.Heartbeat:Connect(function()
-    if not _G.FastAttack then return end
+    if not _G.FastAttack or not RegisterAttack or not RegisterHit then return end
     
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -914,21 +941,41 @@ task.spawn(function()
 end)
 
 -- ================= NOCLIP =================
-
-RunService.Stepped:Connect(function()
-    local char = LocalPlayer.Character
-    if char then
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if root then
-            -- Tắt hoàn toàn trọng lực vật lý thuần túy khi đang farm/tween để không bị kẹt va chạm
-            root.Velocity = Vector3.zero
-        end
-        for _, v in pairs(char:GetDescendants()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = false
+spawn(function()
+    while task.wait(0.2) do
+        pcall(function()
+            local root = GetRoot()
+            if not root then return end
+            if _G.LevelFarm or NoClip == true then
+                if not root:FindFirstChild("BodyClip") then
+                    local Noclip = Instance.new("BodyVelocity")
+                    Noclip.Name = "BodyClip"
+                    Noclip.Parent = root
+                    Noclip.MaxForce = Vector3.new(100000, 100000, 100000)
+                    Noclip.Velocity = Vector3.new(0, 0, 0)
+                end
+            else
+                if root:FindFirstChild("BodyClip") then
+                    root:FindFirstChild("BodyClip"):Destroy()
+                end
             end
-        end
+        end)
     end
+end)
+
+spawn(function()
+    pcall(function()
+        RunService.Stepped:Connect(function()
+            local char = LocalPlayer.Character
+            if char and (_G.LevelFarm or NoClip == true) then
+                for _, v in pairs(char:GetDescendants()) do
+                    if v:IsA("BasePart") then
+                        v.CanCollide = false
+                    end
+                end
+            end
+        end)
+    end)
 end)
 
 -- ================= AUTO STATS & WEAPON SWITCH =================
@@ -957,13 +1004,14 @@ task.spawn(function()
                 _G.CurrentEquippedTool = targetMelee.Name
                 EquipTool(targetMelee.Name)
             else
-                local equipped = false
-                for _, v in pairs(LocalPlayer.Backpack:GetChildren()) do
-                    if v:IsA("Tool") and v.ToolTip == "Melee" and not MeleeCache[v.Name] then
-                        _G.CurrentEquippedTool = v.Name
-                        EquipTool(v.Name)
-                        equipped = true
-                        break
+                local bp = LocalPlayer:FindFirstChild("Backpack")
+                if bp then
+                    for _, v in pairs(bp:GetChildren()) do
+                        if v:IsA("Tool") and v.ToolTip == "Melee" and not MeleeCache[v.Name] then
+                            _G.CurrentEquippedTool = v.Name
+                            EquipTool(v.Name)
+                            break
+                        end
                     end
                 end
             end
@@ -1186,335 +1234,335 @@ function Checknhiemvu()
     local YourLevel = levelObj and levelObj.Value or 1
 
     if taodangosea1 then
-        if YourLevel == 1 or YourLevel <= 9 then
+        if YourLevel <= 9 then
             Mob = "Bandit"; NumberQuest = 1; NameQuest = "BanditQuest1"; NameMob = "Bandit"
             CFrameQuest = CFrame.new(1059.37195, 15.4495068, 1550.4231, 0.939700544, -0, -0.341998369, 0, 1, -0, 0.341998369, 0, 0.939700544)
             CFrameMob = CFrame.new(1045.962646484375, 27.00250816345215, 1560.8203125)
-        elseif YourLevel == 10 or YourLevel <= 14 then
+        elseif YourLevel <= 14 then
             Mob = "Monkey"; NumberQuest = 1; NameQuest = "JungleQuest"; NameMob = "Monkey"
             CFrameQuest = CFrame.new(-1598.08911, 35.5501175, 153.377838, 0, 0, 1, 0, 1, -0, -1, 0, 0)
             CFrameMob = CFrame.new(-1448.51806640625, 67.85301208496094, 11.46579647064209)
-        elseif YourLevel == 15 or YourLevel <= 29 then
+        elseif YourLevel <= 29 then
             Mob = "Gorilla"; NumberQuest = 2; NameQuest = "JungleQuest"; NameMob = "Gorilla"
             CFrameQuest = CFrame.new(-1598.08911, 35.5501175, 153.377838, 0, 0, 1, 0, 1, -0, -1, 0, 0)
             CFrameMob = CFrame.new(-1129.8836669921875, 40.46354675292969, -525.4237060546875)
-        elseif YourLevel == 30 or YourLevel <= 39 then
+        elseif YourLevel <= 39 then
             Mob = "Pirate"; NumberQuest = 1; NameQuest = "BuggyQuest1"; NameMob = "Pirate"
             CFrameQuest = CFrame.new(-1141.07483, 4.10001802, 3831.5498, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627)
             CFrameMob = CFrame.new(-1103.513427734375, 13.752052307128906, 3896.091064453125)
-        elseif YourLevel == 40 or YourLevel <= 59 then
+        elseif YourLevel <= 59 then
             Mob = "Brute"; NumberQuest = 2; NameQuest = "BuggyQuest1"; NameMob = "Brute"
             CFrameQuest = CFrame.new(-1141.07483, 4.10001802, 3831.5498, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627)
             CFrameMob = CFrame.new(-1140.083740234375, 14.809885025024414, 4322.92138671875)
-        elseif YourLevel == 60 or YourLevel <= 74 then
+        elseif YourLevel <= 74 then
             Mob = "Desert Bandit"; NumberQuest = 1; NameQuest = "DesertQuest"; NameMob = "Desert Bandit"
             CFrameQuest = CFrame.new(894.488647, 5.14000702, 4392.43359, 0.819155693, -0, -0.573571265, 0, 1, -0, 0.573571265, 0, 0.819155693)
             CFrameMob = CFrame.new(924.7998046875, 6.44867467880249, 4481.5859375)
-        elseif YourLevel == 75 or YourLevel <= 89 then
+        elseif YourLevel <= 89 then
             Mob = "Desert Officer"; NumberQuest = 2; NameQuest = "DesertQuest"; NameMob = "Desert Officer"
             CFrameQuest = CFrame.new(894.488647, 5.14000702, 4392.43359, 0.819155693, -0, -0.573571265, 0, 1, -0, 0.573571265, 0, 0.819155693)
             CFrameMob = CFrame.new(1608.2822265625, 8.614224433898926, 4371.00732421875)
-        elseif YourLevel == 90 or YourLevel <= 99 then
+        elseif YourLevel <= 99 then
             Mob = "Snow Bandit"; NumberQuest = 1; NameQuest = "SnowQuest"; NameMob = "Snow Bandit"
             CFrameQuest = CFrame.new(1389.74451, 88.1519318, -1298.90796, -0.342042685, 0, 0.939684391, 0, 1, 0, -0.939684391, 0, -0.342042685)
             CFrameMob = CFrame.new(1354.347900390625, 87.27277374267578, -1393.946533203125)
-        elseif YourLevel == 100 or YourLevel <= 119 then
+        elseif YourLevel <= 119 then
             Mob = "Snowman"; NumberQuest = 2; NameQuest = "SnowQuest"; NameMob = "Snowman"
             CFrameQuest = CFrame.new(1389.74451, 88.1519318, -1298.90796, -0.342042685, 0, 0.939684391, 0, 1, 0, -0.939684391, 0, -0.342042685)
             CFrameMob = CFrame.new(1201.6412353515625, 144.57958984375, -1550.0670166015625)
-        elseif YourLevel == 120 or YourLevel <= 149 then
+        elseif YourLevel <= 149 then
             Mob = "Chief Petty Officer"; NumberQuest = 1; NameQuest = "MarineQuest2"; NameMob = "Chief Petty Officer"
             CFrameQuest = CFrame.new(-5039.58643, 27.3500385, 4324.68018, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-4881.23095703125, 22.65204429626465, 4273.75244140625)
-        elseif YourLevel == 150 or YourLevel <= 174 then
+        elseif YourLevel <= 174 then
             Mob = "Sky Bandit"; NumberQuest = 1; NameQuest = "SkyQuest"; NameMob = "Sky Bandit"
             CFrameQuest = CFrame.new(-4839.53027, 716.368591, -2619.44165, 0.866007268, 0, 0.500031412, 0, 1, 0, -0.500031412, 0, 0.866007268)
             CFrameMob = CFrame.new(-4953.20703125, 295.74420166015625, -2899.22900390625)
-        elseif YourLevel == 175 or YourLevel <= 189 then
+        elseif YourLevel <= 189 then
             Mob = "Dark Master"; NumberQuest = 2; NameQuest = "SkyQuest"; NameMob = "Dark Master"
             CFrameQuest = CFrame.new(-4839.53027, 716.368591, -2619.44165, 0.866007268, 0, 0.500031412, 0, 1, 0, -0.500031412, 0, 0.866007268)
             CFrameMob = CFrame.new(-5259.8447265625, 391.3976745605469, -2229.035400390625)
-        elseif YourLevel == 190 or YourLevel <= 209 then
+        elseif YourLevel <= 209 then
             Mob = "Prisoner"; NumberQuest = 1; NameQuest = "PrisonerQuest"; NameMob = "Prisoner"
             CFrameQuest = CFrame.new(5308.93115, 1.65517521, 475.120514, -0.0894274712, -5.00292918e-09, -0.995993316, 1.60817859e-09, 1, -5.16744869e-09, 0.995993316, -2.06384709e-09, -0.0894274712)
             CFrameMob = CFrame.new(5098.9736328125, -0.3204058110713959, 474.2373352050781)
-        elseif YourLevel == 210 or YourLevel <= 249 then
+        elseif YourLevel <= 249 then
             Mob = "Dangerous Prisoner"; NumberQuest = 2; NameQuest = "PrisonerQuest"; NameMob = "Dangerous Prisoner"
             CFrameQuest = CFrame.new(5308.93115, 1.65517521, 475.120514, -0.0894274712, -5.00292918e-09, -0.995993316, 1.60817859e-09, 1, -5.16744869e-09, 0.995993316, -2.06384709e-09, -0.0894274712)
             CFrameMob = CFrame.new(5654.5634765625, 15.633401870727539, 866.2991943359375)
-        elseif YourLevel == 250 or YourLevel <= 274 then
+        elseif YourLevel <= 274 then
             Mob = "Toga Warrior"; NumberQuest = 1; NameQuest = "ColosseumQuest"; NameMob = "Toga Warrior"
             CFrameQuest = CFrame.new(-1580.04663, 6.35000277, -2986.47534, -0.515037298, 0, -0.857167721, 0, 1, 0, 0.857167721, 0, -0.515037298)
             CFrameMob = CFrame.new(-1820.21484375, 51.68385696411133, -2740.6650390625)
-        elseif YourLevel == 275 or YourLevel <= 299 then
+        elseif YourLevel <= 299 then
             Mob = "Gladiator"; NumberQuest = 2; NameQuest = "ColosseumQuest"; NameMob = "Gladiator"
             CFrameQuest = CFrame.new(-1580.04663, 6.35000277, -2986.47534, -0.515037298, 0, -0.857167721, 0, 1, 0, 0.857167721, 0, -0.515037298)
             CFrameMob = CFrame.new(-1292.838134765625, 56.380882263183594, -3339.031494140625)
-        elseif YourLevel == 300 or YourLevel <= 324 then
+        elseif YourLevel <= 324 then
             Mob = "Military Soldier"; NumberQuest = 1; NameQuest = "MagmaQuest"; NameMob = "Military Soldier"
             CFrameQuest = CFrame.new(-5313.37012, 10.9500084, 8515.29395, -0.499959469, 0, 0.866048813, 0, 1, 0, -0.866048813, 0, -0.499959469)
             CFrameMob = CFrame.new(-5411.16455078125, 11.081554412841797, 8454.29296875)
-        elseif YourLevel == 325 or YourLevel <= 374 then
+        elseif YourLevel <= 374 then
             Mob = "Military Spy"; NumberQuest = 2; NameQuest = "MagmaQuest"; NameMob = "Military Spy"
             CFrameQuest = CFrame.new(-5313.37012, 10.9500084, 8515.29395, -0.499959469, 0, 0.866048813, 0, 1, 0, -0.866048813, 0, -0.499959469)
             CFrameMob = CFrame.new(-5802.8681640625, 86.26241302490234, 8828.859375)
-        elseif YourLevel == 375 or YourLevel <= 399 then
+        elseif YourLevel <= 399 then
             Mob = "Fishman Warrior"; NumberQuest = 1; NameQuest = "FishmanQuest"; NameMob = "Fishman Warrior"
             CFrameQuest = CFrame.new(61122.65234375, 18.497442245483, 1569.3997802734)
             CFrameMob = CFrame.new(60878.30078125, 18.482830047607422, 1543.7574462890625)
-        elseif YourLevel == 400 or YourLevel <= 449 then
+        elseif YourLevel <= 449 then
             Mob = "Fishman Commando"; NumberQuest = 2; NameQuest = "FishmanQuest"; NameMob = "Fishman Commando"
             CFrameQuest = CFrame.new(61122.65234375, 18.497442245483, 1569.3997802734)
             CFrameMob = CFrame.new(61922.6328125, 18.482830047607422, 1493.934326171875)
-        elseif YourLevel == 450 or YourLevel <= 474 then
+        elseif YourLevel <= 474 then
             Mob = "God's Guard"; NumberQuest = 1; NameQuest = "SkyExp1Quest"; NameMob = "God's Guard"
             CFrameQuest = CFrame.new(-4721.88867, 843.874695, -1949.96643, 0.996191859, -0, -0.0871884301, 0, 1, -0, 0.0871884301, 0, 0.996191859)
             CFrameMob = CFrame.new(-4710.04296875, 845.2769775390625, -1927.3079833984375)
-        elseif YourLevel == 475 or YourLevel <= 524 then
+        elseif YourLevel <= 524 then
             Mob = "Shanda"; NumberQuest = 2; NameQuest = "SkyExp1Quest"; NameMob = "Shanda"
             CFrameQuest = CFrame.new(-7859.09814, 5544.19043, -381.476196, -0.422592998, 0, 0.906319618, 0, 1, 0, -0.906319618, 0, -0.422592998)
             CFrameMob = CFrame.new(-7678.48974609375, 5566.40380859375, -497.2156066894531)
-        elseif YourLevel == 525 or YourLevel <= 549 then
+        elseif YourLevel <= 549 then
             Mob = "Royal Squad"; NumberQuest = 1; NameQuest = "SkyExp2Quest"; NameMob = "Royal Squad"
             CFrameQuest = CFrame.new(-7906.81592, 5634.6626, -1411.99194, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-7624.25244140625, 5658.13330078125, -1467.354248046875)
-        elseif YourLevel == 550 or YourLevel <= 624 then
+        elseif YourLevel <= 624 then
             Mob = "Royal Soldier"; NumberQuest = 2; NameQuest = "SkyExp2Quest"; NameMob = "Royal Soldier"
             CFrameQuest = CFrame.new(-7906.81592, 5634.6626, -1411.99194, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-7836.75341796875, 5645.6640625, -1790.6236572265625)
-        elseif YourLevel == 625 or YourLevel <= 649 then
+        elseif YourLevel <= 649 then
             Mob = "Galley Pirate"; NumberQuest = 1; NameQuest = "FountainQuest"; NameMob = "Galley Pirate"
             CFrameQuest = CFrame.new(5259.81982, 37.3500175, 4050.0293, 0.087131381, 0, 0.996196866, 0, 1, 0, -0.996196866, 0, 0.087131381)
             CFrameMob = CFrame.new(5551.02197265625, 78.90135192871094, 3930.412841796875)
-        elseif YourLevel >= 650 then
+        else
             Mob = "Galley Captain"; NumberQuest = 2; NameQuest = "FountainQuest"; NameMob = "Galley Captain"
             CFrameQuest = CFrame.new(5259.81982, 37.3500175, 4050.0293, 0.087131381, 0, 0.996196866, 0, 1, 0, -0.996196866, 0, 0.087131381)
             CFrameMob = CFrame.new(5441.95166015625, 42.50205993652344, 4950.09375)
         end
     elseif taodangosea2 then
-        if YourLevel == 700 or YourLevel <= 724 then
+        if YourLevel <= 724 then
             Mob = "Raider"; NumberQuest = 1; NameQuest = "Area1Quest"; NameMob = "Raider"
             CFrameQuest = CFrame.new(-429.543518, 71.7699966, 1836.18188, -0.22495985, 0, -0.974368095, 0, 1, 0, 0.974368095, 0, -0.22495985)
             CFrameMob = CFrame.new(-728.3267211914062, 52.779319763183594, 2345.7705078125)
-        elseif YourLevel == 725 or YourLevel <= 774 then
+        elseif YourLevel <= 774 then
             Mob = "Mercenary"; NumberQuest = 2; NameQuest = "Area1Quest"; NameMob = "Mercenary"
             CFrameQuest = CFrame.new(-429.543518, 71.7699966, 1836.18188, -0.22495985, 0, -0.974368095, 0, 1, 0, 0.974368095, 0, -0.22495985)
             CFrameMob = CFrame.new(-1004.3244018554688, 80.15886688232422, 1424.619384765625)
-        elseif YourLevel == 775 or YourLevel <= 799 then
+        elseif YourLevel <= 799 then
             Mob = "Swan Pirate"; NumberQuest = 1; NameQuest = "Area2Quest"; NameMob = "Swan Pirate"
             CFrameQuest = CFrame.new(638.43811, 71.769989, 918.282898, 0.139203906, 0, 0.99026376, 0, 1, 0, -0.99026376, 0, 0.139203906)
             CFrameMob = CFrame.new(1068.664306640625, 137.61428833007812, 1322.1060791015625)
-        elseif YourLevel == 800 or YourLevel <= 874 then
+        elseif YourLevel <= 874 then
             Mob = "Factory Staff"; NameQuest = "Area2Quest"; NumberQuest = 2; NameMob = "Factory Staff"
             CFrameQuest = CFrame.new(632.698608, 73.1055908, 918.666321, -0.0319722369, 8.96074881e-10, -0.999488771, 1.36326533e-10, 1, 8.92172336e-10, 0.999488771, -1.07732087e-10, -0.0319722369)
             CFrameMob = CFrame.new(73.07867431640625, 81.86344146728516, -27.470672607421875)
-        elseif YourLevel == 875 or YourLevel <= 899 then
+        elseif YourLevel <= 899 then
             Mob = "Marine Lieutenant"; NumberQuest = 1; NameQuest = "MarineQuest3"; NameMob = "Marine Lieutenant"
             CFrameQuest = CFrame.new(-2440.79639, 71.7140732, -3216.06812, 0.866007268, 0, 0.500031412, 0, 1, 0, -0.500031412, 0, 0.866007268)
             CFrameMob = CFrame.new(-2821.372314453125, 75.89727783203125, -3070.089111328125)
-        elseif YourLevel == 900 or YourLevel <= 949 then
+        elseif YourLevel <= 949 then
             Mob = "Marine Captain"; NumberQuest = 2; NameQuest = "MarineQuest3"; NameMob = "Marine Captain"
             CFrameQuest = CFrame.new(-2440.79639, 71.7140732, -3216.06812, 0.866007268, 0, 0.500031412, 0, 1, 0, -0.500031412, 0, 0.866007268)
             CFrameMob = CFrame.new(-1861.2310791015625, 80.17658233642578, -3254.697509765625)
-        elseif YourLevel == 950 or YourLevel <= 974 then
+        elseif YourLevel <= 974 then
             Mob = "Zombie"; NumberQuest = 1; NameQuest = "ZombieQuest"; NameMob = "Zombie"
             CFrameQuest = CFrame.new(-5497.06152, 47.5923004, -795.237061, -0.29242146, 0, -0.95628953, 0, 1, 0, 0.95628953, 0, -0.29242146)
             CFrameMob = CFrame.new(-5657.77685546875, 78.96973419189453, -928.68701171875)
-        elseif YourLevel == 975 or YourLevel <= 999 then
+        elseif YourLevel <= 999 then
             Mob = "Vampire"; NumberQuest = 2; NameQuest = "ZombieQuest"; NameMob = "Vampire"
             CFrameQuest = CFrame.new(-5497.06152, 47.5923004, -795.237061, -0.29242146, 0, -0.95628953, 0, 1, 0, 0.95628953, 0, -0.29242146)
             CFrameMob = CFrame.new(-6037.66796875, 32.18463897705078, -1340.6597900390625)
-        elseif YourLevel == 1000 or YourLevel <= 1049 then
+        elseif YourLevel <= 1049 then
             Mob = "Snow Trooper"; NumberQuest = 1; NameQuest = "SnowMountainQuest"; NameMob = "Snow Trooper"
             CFrameQuest = CFrame.new(609.858826, 400.119904, -5372.25928, -0.374604106, 0, 0.92718488, 0, 1, 0, -0.92718488, 0, -0.374604106)
             CFrameMob = CFrame.new(549.1473388671875, 427.3870544433594, -5563.69873046875)
-        elseif YourLevel == 1050 or YourLevel <= 1099 then
+        elseif YourLevel <= 1099 then
             Mob = "Winter Warrior"; NumberQuest = 2; NameQuest = "SnowMountainQuest"; NameMob = "Winter Warrior"
             CFrameQuest = CFrame.new(609.858826, 400.119904, -5372.25928, -0.374604106, 0, 0.92718488, 0, 1, 0, -0.92718488, 0, -0.374604106)
             CFrameMob = CFrame.new(1142.7451171875, 475.6398010253906, -5199.41650390625)
-        elseif YourLevel == 1100 or YourLevel <= 1124 then
+        elseif YourLevel <= 1124 then
             Mob = "Lab Subordinate"; NumberQuest = 1; NameQuest = "IceSideQuest"; NameMob = "Lab Subordinate"
             CFrameQuest = CFrame.new(-6064.06885, 15.2422857, -4902.97852, 0.453972578, -0, -0.891015649, 0, 1, -0, 0.891015649, 0, 0.453972578)
             CFrameMob = CFrame.new(-5707.4716796875, 15.951709747314453, -4513.39208984375)
-        elseif YourLevel == 1125 or YourLevel <= 1174 then
+        elseif YourLevel <= 1174 then
             Mob = "Horned Warrior"; NumberQuest = 2; NameQuest = "IceSideQuest"; NameMob = "Horned Warrior"
             CFrameQuest = CFrame.new(-6064.06885, 15.2422857, -4902.97852, 0.453972578, -0, -0.891015649, 0, 1, -0, 0.891015649, 0, 0.453972578)
             CFrameMob = CFrame.new(-6341.36669921875, 15.951770782470703, -5723.162109375)
-        elseif YourLevel == 1175 or YourLevel <= 1199 then
+        elseif YourLevel <= 1199 then
             Mob = "Magma Ninja"; NumberQuest = 1; NameQuest = "FireSideQuest"; NameMob = "Magma Ninja"
             CFrameQuest = CFrame.new(-5428.03174, 15.0622921, -5299.43457, -0.882952213, 0, 0.469463557, 0, 1, 0, -0.469463557, 0, -0.882952213)
             CFrameMob = CFrame.new(-5449.6728515625, 76.65874481201172, -5808.20068359375)
-        elseif YourLevel == 1200 or YourLevel <= 1249 then
+        elseif YourLevel <= 1249 then
             Mob = "Lava Pirate"; NumberQuest = 2; NameQuest = "FireSideQuest"; NameMob = "Lava Pirate"
             CFrameQuest = CFrame.new(-5428.03174, 15.0622921, -5299.43457, -0.882952213, 0, 0.469463557, 0, 1, 0, -0.469463557, 0, -0.882952213)
             CFrameMob = CFrame.new(-5213.33154296875, 49.73788070678711, -4701.451171875)
-        elseif YourLevel == 1250 or YourLevel <= 1274 then
+        elseif YourLevel <= 1274 then
             Mob = "Ship Deckhand"; NumberQuest = 1; NameQuest = "ShipQuest1"; NameMob = "Ship Deckhand"
             CFrameQuest = CFrame.new(1037.80127, 125.092171, 32911.6016)
             CFrameMob = CFrame.new(1212.0111083984375, 150.79205322265625, 33059.24609375)
-        elseif YourLevel == 1275 or YourLevel <= 1299 then
+        elseif YourLevel <= 1299 then
             Mob = "Ship Engineer"; NumberQuest = 2; NameQuest = "ShipQuest1"; NameMob = "Ship Engineer"
             CFrameQuest = CFrame.new(1037.80127, 125.092171, 32911.6016)
             CFrameMob = CFrame.new(919.4786376953125, 43.54401397705078, 32779.96875)
-        elseif YourLevel == 1300 or YourLevel <= 1324 then
+        elseif YourLevel <= 1324 then
             Mob = "Ship Steward"; NumberQuest = 1; NameQuest = "ShipQuest2"; NameMob = "Ship Steward"
             CFrameQuest = CFrame.new(968.80957, 125.092171, 33244.125)
             CFrameMob = CFrame.new(919.4385375976562, 129.55599975585938, 33436.03515625)
-        elseif YourLevel == 1325 or YourLevel <= 1349 then
+        elseif YourLevel <= 1349 then
             Mob = "Ship Officer"; NumberQuest = 2; NameQuest = "ShipQuest2"; NameMob = "Ship Officer"
             CFrameQuest = CFrame.new(968.80957, 125.092171, 33244.125)
             CFrameMob = CFrame.new(1036.0179443359375, 181.4390411376953, 33315.7265625)
-        elseif YourLevel == 1350 or YourLevel <= 1374 then
+        elseif YourLevel <= 1374 then
             Mob = "Arctic Warrior"; NumberQuest = 1; NameQuest = "FrostQuest"; NameMob = "Arctic Warrior"
             CFrameQuest = CFrame.new(5667.6582, 26.7997818, -6486.08984, -0.933587909, 0, -0.358349502, 0, 1, 0, 0.358349502, 0, -0.933587909)
             CFrameMob = CFrame.new(5966.24609375, 62.97002029418945, -6179.3828125)
-        elseif YourLevel == 1375 or YourLevel <= 1424 then
+        elseif YourLevel <= 1424 then
             Mob = "Snow Lurker"; NumberQuest = 2; NameQuest = "FrostQuest"; NameMob = "Snow Lurker"
             CFrameQuest = CFrame.new(5667.6582, 26.7997818, -6486.08984, -0.933587909, 0, -0.358349502, 0, 1, 0, 0.358349502, 0, -0.933587909)
             CFrameMob = CFrame.new(5407.07373046875, 69.19437408447266, -6880.88037109375)
-        elseif YourLevel == 1425 or YourLevel <= 1449 then
+        elseif YourLevel <= 1449 then
             Mob = "Sea Soldier"; NumberQuest = 1; NameQuest = "ForgottenQuest"; NameMob = "Sea Soldier"
             CFrameQuest = CFrame.new(-3054.44458, 235.544281, -10142.8193, 0.990270376, -0, -0.13915664, 0, 1, -0, 0.13915664, 0, 0.990270376)
             CFrameMob = CFrame.new(-3028.2236328125, 64.67451477050781, -9775.4267578125)
-        elseif YourLevel >= 1450 then
+        else
             Mob = "Water Fighter"; NumberQuest = 2; NameQuest = "ForgottenQuest"; NameMob = "Water Fighter"
             CFrameQuest = CFrame.new(-3054.44458, 235.544281, -10142.8193, 0.990270376, -0, -0.13915664, 0, 1, -0, 0.13915664, 0, 0.990270376)
             CFrameMob = CFrame.new(-3352.9013671875, 285.01556396484375, -10534.841796875)
         end
     elseif taodangosea3 then
-        if YourLevel == 1500 or YourLevel <= 1524 then
+        if YourLevel <= 1524 then
             Mob = "Pirate Millionaire"; NumberQuest = 1; NameQuest = "PiratePortQuest"; NameMob = "Pirate Millionaire"
             CFrameQuest = CFrame.new(-290.074677, 42.9034653, 5581.58984, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627)
             CFrameMob = CFrame.new(-245.9963836669922, 47.30615234375, 5584.1005859375)
-        elseif YourLevel == 1525 or YourLevel <= 1574 then
+        elseif YourLevel <= 1574 then
             Mob = "Pistol Billionaire"; NumberQuest = 2; NameQuest = "PiratePortQuest"; NameMob = "Pistol Billionaire"
             CFrameQuest = CFrame.new(-290.074677, 42.9034653, 5581.58984, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627)
             CFrameMob = CFrame.new(-187.3301544189453, 86.23987579345703, 6013.513671875)
-        elseif YourLevel == 1575 or YourLevel <= 1599 then
+        elseif YourLevel <= 1599 then
             Mob = "Dragon Crew Warrior"; NumberQuest = 1; NameQuest = "AmazonQuest"; NameMob = "Dragon Crew Warrior"
             CFrameQuest = CFrame.new(5832.83594, 51.6806107, -1101.51563, 0.898790359, -0, -0.438378751, 0, 1, -0, 0.438378751, 0, 0.898790359)
             CFrameMob = CFrame.new(6141.140625, 51.35136413574219, -1340.738525390625)
-        elseif YourLevel == 1600 or YourLevel <= 1624 then
+        elseif YourLevel <= 1624 then
             Mob = "Dragon Crew Archer"; NameQuest = "AmazonQuest"; NumberQuest = 2; NameMob = "Dragon Crew Archer"
             CFrameQuest = CFrame.new(5833.1147460938, 51.60498046875, -1103.0693359375)
             CFrameMob = CFrame.new(6616.41748046875, 441.7670593261719, 446.0469970703125)
-        elseif YourLevel == 1625 or YourLevel <= 1649 then
+        elseif YourLevel <= 1649 then
             Mob = "Female Islander"; NameQuest = "AmazonQuest2"; NumberQuest = 1; NameMob = "Female Islander"
             CFrameQuest = CFrame.new(5446.8793945313, 601.62945556641, 749.45672607422)
             CFrameMob = CFrame.new(4685.25830078125, 735.8078002929688, 815.3425903320312)
-        elseif YourLevel == 1650 or YourLevel <= 1699 then
+        elseif YourLevel <= 1699 then
             Mob = "Giant Islander"; NameQuest = "AmazonQuest2"; NumberQuest = 2; NameMob = "Giant Islander"
             CFrameQuest = CFrame.new(5446.8793945313, 601.62945556641, 749.45672607422)
             CFrameMob = CFrame.new(4729.09423828125, 590.436767578125, -36.97627639770508)
-        elseif YourLevel == 1700 or YourLevel <= 1724 then
+        elseif YourLevel <= 1724 then
             Mob = "Marine Commodore"; NumberQuest = 1; NameQuest = "MarineTreeIsland"; NameMob = "Marine Commodore"
             CFrameQuest = CFrame.new(2180.54126, 27.8156815, -6741.5498, -0.965929747, 0, 0.258804798, 0, 1, 0, -0.258804798, 0, -0.965929747)
             CFrameMob = CFrame.new(2286.0078125, 73.13391876220703, -7159.80908203125)
-        elseif YourLevel == 1725 or YourLevel <= 1774 then
+        elseif YourLevel <= 1774 then
             Mob = "Marine Rear Admiral"; NameMob = "Marine Rear Admiral"; NameQuest = "MarineTreeIsland"; NumberQuest = 2
             CFrameQuest = CFrame.new(2179.98828125, 28.731239318848, -6740.0551757813)
             CFrameMob = CFrame.new(3656.773681640625, 160.52406311035156, -7001.5986328125)
-        elseif YourLevel == 1775 or YourLevel <= 1799 then
+        elseif YourLevel <= 1799 then
             Mob = "Fishman Raider"; NumberQuest = 1; NameQuest = "DeepForestIsland3"; NameMob = "Fishman Raider"
             CFrameQuest = CFrame.new(-10581.6563, 330.872955, -8761.18652, -0.882952213, 0, 0.469463557, 0, 1, 0, -0.469463557, 0, -0.882952213)
             CFrameMob = CFrame.new(-10407.5263671875, 331.76263427734375, -8368.5166015625)
-        elseif YourLevel == 1800 or YourLevel <= 1824 then
+        elseif YourLevel <= 1824 then
             Mob = "Fishman Captain"; NumberQuest = 2; NameQuest = "DeepForestIsland3"; NameMob = "Fishman Captain"
-            CFrameQuest = CFrame.new(-10581.6563, 330.872955, -8761.18652, -0.882952213, 0, 0.469463557, 0, 1, 0, -0.882952213, 0, -0.882952213)
+            CFrameQuest = CFrame.new(-10581.6563, 330.872955, -8761.18652, -0.882952213, 0, 0.469463557, 0, 1, 0, -0.469463557, 0, -0.882952213)
             CFrameMob = CFrame.new(-10994.701171875, 352.38140869140625, -9002.1103515625)
-        elseif YourLevel == 1825 or YourLevel <= 1849 then
+        elseif YourLevel <= 1849 then
             Mob = "Forest Pirate"; NumberQuest = 1; NameQuest = "DeepForestIsland"; NameMob = "Forest Pirate"
             CFrameQuest = CFrame.new(-13234.04, 331.488495, -7625.40137, 0.707134247, -0, -0.707079291, 0, 1, -0, 0.707079291, 0, 0.707134247)
             CFrameMob = CFrame.new(-13274.478515625, 332.3781433105469, -7769.58056640625)
-        elseif YourLevel == 1850 or YourLevel <= 1899 then
+        elseif YourLevel <= 1899 then
             Mob = "Mythological Pirate"; NumberQuest = 2; NameQuest = "DeepForestIsland"; NameMob = "Mythological Pirate"
             CFrameQuest = CFrame.new(-13234.04, 331.488495, -7625.40137, 0.707134247, -0, -0.707079291, 0, 1, -0, 0.707079291, 0, 0.707134247)
             CFrameMob = CFrame.new(-13680.607421875, 501.08154296875, -6991.189453125)
-        elseif YourLevel == 1900 or YourLevel <= 1924 then
+        elseif YourLevel <= 1924 then
             Mob = "Jungle Pirate"; NumberQuest = 1; NameQuest = "DeepForestIsland2"; NameMob = "Jungle Pirate"
             CFrameQuest = CFrame.new(-12680.3818, 389.971039, -9902.01953, -0.0871315002, 0, 0.996196866, 0, 1, 0, -0.996196866, 0, -0.0871315002)
             CFrameMob = CFrame.new(-12256.16015625, 331.73828125, -10485.8369140625)
-        elseif YourLevel == 1925 or YourLevel <= 1974 then
+        elseif YourLevel <= 1974 then
             Mob = "Musketeer Pirate"; NumberQuest = 2; NameQuest = "DeepForestIsland2"; NameMob = "Musketeer Pirate"
             CFrameQuest = CFrame.new(-12680.3818, 389.971039, -9902.01953, -0.0871315002, 0, 0.996196866, 0, 1, 0, -0.996196866, 0, -0.0871315002)
             CFrameMob = CFrame.new(-13457.904296875, 391.545654296875, -9859.177734375)
-        elseif YourLevel == 1975 or YourLevel <= 1999 then
+        elseif YourLevel <= 1999 then
             Mob = "Reborn Skeleton"; NumberQuest = 1; NameQuest = "HauntedQuest1"; NameMob = "Reborn Skeleton"
             CFrameQuest = CFrame.new(-9479.2168, 141.215088, 5566.09277, 0, 0, 1, 0, 1, -0, -1, 0, 0)
             CFrameMob = CFrame.new(-8763.7236328125, 165.72299194335938, 6159.86181640625)
-        elseif YourLevel == 2000 or YourLevel <= 2024 then
+        elseif YourLevel <= 2024 then
             Mob = "Living Zombie"; NumberQuest = 2; NameQuest = "HauntedQuest1"; NameMob = "Living Zombie"
             CFrameQuest = CFrame.new(-9479.2168, 141.215088, 5566.09277, 0, 0, 1, 0, 1, -0, -1, 0, 0)
             CFrameMob = CFrame.new(-10144.1318359375, 138.62667846679688, 5838.0888671875)
-        elseif YourLevel == 2025 or YourLevel <= 2049 then
+        elseif YourLevel <= 2049 then
             Mob = "Demonic Soul"; NumberQuest = 1; NameQuest = "HauntedQuest2"; NameMob = "Demonic Soul"
             CFrameQuest = CFrame.new(-9516.99316, 172.017181, 6078.46533, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-9505.8720703125, 172.10482788085938, 6158.9931640625)
-        elseif YourLevel == 2050 or YourLevel <= 2074 then
+        elseif YourLevel <= 2074 then
             Mob = "Posessed Mummy"; NumberQuest = 2; NameQuest = "HauntedQuest2"; NameMob = "Posessed Mummy"
             CFrameQuest = CFrame.new(-9516.99316, 172.017181, 6078.46533, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-9582.0224609375, 6.251527309417725, 6205.478515625)
-        elseif YourLevel == 2075 or YourLevel <= 2099 then
+        elseif YourLevel <= 2099 then
             Mob = "Peanut Scout"; NumberQuest = 1; NameQuest = "NutsIslandQuest"; NameMob = "Peanut Scout"
             CFrameQuest = CFrame.new(-2104.3908691406, 38.104167938232, -10194.21875, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-2143.241943359375, 47.72198486328125, -10029.9951171875)
-        elseif YourLevel == 2100 or YourLevel <= 2124 then
+        elseif YourLevel <= 2124 then
             Mob = "Peanut President"; NumberQuest = 2; NameQuest = "NutsIslandQuest"; NameMob = "Peanut President"
             CFrameQuest = CFrame.new(-2104.3908691406, 38.104167938232, -10194.21875, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-1859.35400390625, 38.10316848754883, -10422.4296875)
-        elseif YourLevel == 2125 or YourLevel <= 2149 then
+        elseif YourLevel <= 2149 then
             Mob = "Ice Cream Chef"; NumberQuest = 1; NameQuest = "IceCreamIslandQuest"; NameMob = "Ice Cream Chef"
             CFrameQuest = CFrame.new(-820.64825439453, 65.819526672363, -10965.795898438, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-872.24658203125, 65.81957244873047, -10919.95703125)
-        elseif YourLevel == 2150 or YourLevel <= 2199 then
+        elseif YourLevel <= 2199 then
             Mob = "Ice Cream Commander"; NumberQuest = 2; NameQuest = "IceCreamIslandQuest"; NameMob = "Ice Cream Commander"
             CFrameQuest = CFrame.new(-820.64825439453, 65.819526672363, -10965.795898438, 0, 0, -1, 0, 1, 0, 1, 0, 0)
             CFrameMob = CFrame.new(-558.06103515625, 112.04895782470703, -11290.7744140625)
-        elseif YourLevel == 2200 or YourLevel <= 2224 then
+        elseif YourLevel <= 2224 then
             Mob = "Cookie Crafter"; NumberQuest = 1; NameQuest = "CakeQuest1"; NameMob = "Cookie Crafter"
             CFrameQuest = CFrame.new(-2021.32007, 37.7982254, -12028.7295, 0.957576931, -8.80302053e-08, 0.288177818, 6.9301187e-08, 1, 7.51931211e-08, -0.288177818, -5.2032135e-08, 0.957576931)
             CFrameMob = CFrame.new(-2374.13671875, 37.79826354980469, -12125.30859375)
-        elseif YourLevel == 2225 or YourLevel <= 2249 then
+        elseif YourLevel <= 2249 then
             Mob = "Cake Guard"; NumberQuest = 2; NameQuest = "CakeQuest1"; NameMob = "Cake Guard"
             CFrameQuest = CFrame.new(-2021.32007, 37.7982254, -12028.7295, 0.957576931, -8.80302053e-08, 0.288177818, 6.9301187e-08, 1, 7.51931211e-08, -0.288177818, -5.2032135e-08, 0.957576931)
             CFrameMob = CFrame.new(-1598.3070068359375, 43.773197174072266, -12244.5810546875)
-        elseif YourLevel == 2250 or YourLevel <= 2274 then
+        elseif YourLevel <= 2250 or YourLevel <= 2274 then
             Mob = "Baking Staff"; NumberQuest = 1; NameQuest = "CakeQuest2"; NameMob = "Baking Staff"
             CFrameQuest = CFrame.new(-1927.91602, 37.7981339, -12842.5391, -0.96804446, 4.22142143e-08, 0.250778586, 4.74911062e-08, 1, 1.49904711e-08, -0.250778586, 2.64211941e-08, -0.96804446)
             CFrameMob = CFrame.new(-1887.8099365234375, 77.6185073852539, -12998.3505859375)
-        elseif YourLevel == 2275 or YourLevel <= 2299 then
+        elseif YourLevel <= 2299 then
             Mob = "Head Baker"; NumberQuest = 2; NameQuest = "CakeQuest2"; NameMob = "Head Baker"
             CFrameQuest = CFrame.new(-1927.91602, 37.7981339, -12842.5391, -0.96804446, 4.22142143e-08, 0.250778586, 4.74911062e-08, 1, 1.49904711e-08, -0.250778586, 2.64211941e-08, -0.96804446)
             CFrameMob = CFrame.new(-2216.188232421875, 82.884521484375, -12869.2939453125)
-        elseif YourLevel == 2300 or YourLevel <= 2324 then
+        elseif YourLevel <= 2324 then
             Mob = "Cocoa Warrior"; NumberQuest = 1; NameQuest = "ChocQuest1"; NameMob = "Cocoa Warrior"
             CFrameQuest = CFrame.new(233.22836303710938, 29.876001358032227, -12201.2333984375)
             CFrameMob = CFrame.new(-21.55328369140625, 80.57499694824219, -12352.3876953125)
-        elseif YourLevel == 2325 or YourLevel <= 2349 then
+        elseif YourLevel <= 2349 then
             Mob = "Chocolate Bar Battler"; NumberQuest = 2; NameQuest = "ChocQuest1"; NameMob = "Chocolate Bar Battler"
             CFrameQuest = CFrame.new(233.22836303710938, 29.876001358032227, -12201.2333984375)
             CFrameMob = CFrame.new(582.590576171875, 77.18809509277344, -12463.162109375)
-        elseif YourLevel == 2350 or YourLevel <= 2374 then
+        elseif YourLevel <= 2374 then
             Mob = "Sweet Thief"; NumberQuest = 1; NameQuest = "ChocQuest2"; NameMob = "Sweet Thief"
             CFrameQuest = CFrame.new(150.5066375732422, 30.693693161010742, -12774.5029296875)
             CFrameMob = CFrame.new(165.1884765625, 76.05885314941406, -12600.8369140625)
-        elseif YourLevel == 2375 or YourLevel <= 2399 then
+        elseif YourLevel <= 2399 then
             Mob = "Candy Rebel"; NumberQuest = 2; NameQuest = "ChocQuest2"; NameMob = "Candy Rebel"
             CFrameQuest = CFrame.new(150.5066375732422, 30.693693161010742, -12774.5029296875)
             CFrameMob = CFrame.new(134.86563110351562, 77.2476806640625, -12876.5478515625)
-        elseif YourLevel == 2400 or YourLevel <= 2424 then
+        elseif YourLevel <= 2424 then
             Mob = "Candy Pirate"; NumberQuest = 1; NameQuest = "CandyQuest1"; NameMob = "Candy Pirate"
             CFrameQuest = CFrame.new(-1150.0400390625, 20.378934860229492, -14446.3349609375)
             CFrameMob = CFrame.new(-1310.5003662109375, 26.016523361206055, -14562.404296875)
-        elseif YourLevel == 2425 or YourLevel <= 2449 then
+        elseif YourLevel <= 2449 then
             Mob = "Snow Demon"; NumberQuest = 2; NameQuest = "CandyQuest1"; NameMob = "Snow Demon"
             CFrameQuest = CFrame.new(-1150.0400390625, 20.378934860229492, -14446.3349609375)
             CFrameMob = CFrame.new(-880.2006225585938, 71.24776458740234, -14538.609375)
-        elseif YourLevel == 2450 or YourLevel <= 2474 then
+        elseif YourLevel <= 2474 then
             Mob = "Isle Outlaw"; NumberQuest = 1; NameQuest = "TikiQuest1"; NameMob = "Isle Outlaw"
             CFrameQuest = CFrame.new(-16545.9355, 55.6863556, -173.230499)
             CFrameMob = CFrame.new(-16120.6035, 116.520554, -103.038849)
-        elseif YourLevel == 2475 or YourLevel <= 2524 then
+        elseif YourLevel <= 2524 then
             Mob = "Island Boy"; NumberQuest = 2; NameQuest = "TikiQuest1"; NameMob = "Island Boy"
             CFrameQuest = CFrame.new(-16545.9355, 55.6863556, -173.230499)
             CFrameMob = CFrame.new(-16751.3125, 121.226219, -264.015015)
@@ -1526,63 +1574,50 @@ function Checknhiemvu()
     end
 end
 
-
-spawn(function()
-    while task.wait(0.1) do
+task.spawn(function()
+    while task.wait(0.2) do
         if _G.BringMob then
             pcall(function()
                 Checknhiemvu()
                 local enemies = workspace:FindFirstChild("Enemies")
-                local root = GetRoot()
-                if enemies and root and Mob then
-                    sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
-                    
-                    -- Tìm mặt đất dưới chân người chơi bằng Raycast
-                    local rayOrigin = root.Position + Vector3.new(0, 10, 0)
-                    local rayDirection = Vector3.new(0, -100, 0)
-                    local raycastResult = workspace:Raycast(rayOrigin, rayDirection)
-                    local groundY = root.Position.Y
-                    if raycastResult then
-                        groundY = raycastResult.Position.Y
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if not enemies or not hrp then return end
+
+                for _, v in pairs(enemies:GetChildren()) do
+                    local vHrp = v:FindFirstChild("HumanoidRootPart")
+                    local hum = v:FindFirstChild("Humanoid")
+                    if _G.LevelFarm and BringMob then
+                        if v.Name == Mob and vHrp and hum and hum.Health > 0 and (vHrp.Position - hrp.Position).Magnitude <= 350 then
+                            vHrp.Size = Vector3.new(50, 50, 50)
+                            vHrp.CFrame = PosMon
+                            hum:ChangeState(14)
+                            vHrp.CanCollide = false
+                            if v:FindFirstChild("Head") then v.Head.CanCollide = false end
+                            if hum:FindFirstChild("Animator") then hum.Animator:Destroy() end
+                            pcall(function() sethidprop(LocalPlayer, "SimulationRadius", math.huge) end)
+                        end
                     end
-
-                    for _, v in pairs(enemies:GetChildren()) do
-                        if v.Name == Mob and v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 and v.Parent then
-                            local hrp = v.HumanoidRootPart
-                            local dist = (hrp.Position - root.Position).Magnitude
-                            if dist <= 350 then
-                                -- Đặt vận tốc về 0
-                                hrp.Velocity = Vector3.zero
-                                hrp.RotVelocity = Vector3.zero
-
-                                -- Neo phần gốc để quái không bị bay, rơi hay giật
-                                hrp.Anchored = true
-                                hrp.CanCollide = false
-                                hrp.Size = Vector3.new(60, 60, 60)
-
-                                -- Đặt vị trí quái ngay dưới mặt đất trước mặt người chơi
-                                local offsetX = 0
-                                local offsetZ = -6  -- phía trước
-                                local pos = CFrame.new(
-                                    root.Position.X + offsetX,
-                                    groundY,
-                                    root.Position.Z + offsetZ
-                                )
-                                hrp.CFrame = pos
-
-                                -- Vô hiệu hóa khả năng di chuyển của quái
-                                v.Humanoid.WalkSpeed = 0
-                                v.Humanoid.JumpPower = 0
-                                v.Humanoid.AutoRotate = false
-
-                                -- Hủy Animator nếu có để tránh lỗi
-                                if v:FindFirstChild("Head") then
-                                    v.Head.CanCollide = false
-                                end
-                                if v.Humanoid:FindFirstChild("Animator") then
-                                    v.Humanoid.Animator:Destroy()
-                                end
-                            end
+                    if _G.AutoKatakuri and _G.BringKatakuriMob then
+                        if (v.Name == "Cookie Crafter" or v.Name == "Cake Guard" or v.Name == "Baking Staff" or v.Name == "Head Baker") and vHrp and hum and hum.Health > 0 and (vHrp.Position - hrp.Position).Magnitude <= 350 then
+                            vHrp.Size = Vector3.new(50, 50, 50)
+                            vHrp.CFrame = PosMobCake
+                            hum:ChangeState(14)
+                            vHrp.CanCollide = false
+                            if v:FindFirstChild("Head") then v.Head.CanCollide = false end
+                            if hum:FindFirstChild("Animator") then hum.Animator:Destroy() end
+                            pcall(function() sethidprop(LocalPlayer, "SimulationRadius", math.huge) end)
+                        end
+                    end
+                    if _G.AutoBone and _G.StartCheckBone then
+                        if (v.Name == "Reborn Skeleton" or v.Name == "Living Zombie" or v.Name == "Demonic Soul" or v.Name == "Posessed Mummy") and vHrp and hum and hum.Health > 0 and (vHrp.Position - hrp.Position).Magnitude <= 350 then
+                            vHrp.Size = Vector3.new(50, 50, 50)
+                            vHrp.CFrame = PosMobBone
+                            hum:ChangeState(14)
+                            vHrp.CanCollide = false
+                            if v:FindFirstChild("Head") then v.Head.CanCollide = false end
+                            if hum:FindFirstChild("Animator") then hum.Animator:Destroy() end
+                            pcall(function() sethidprop(LocalPlayer, "SimulationRadius", math.huge) end)
                         end
                     end
                 end
@@ -1591,8 +1626,9 @@ spawn(function()
     end
 end)
 
+-- LUỒNG FARM LEVEL DUY NHẤT ĐÃ ĐƯỢC ĐỒNG BỘ
 spawn(function()
-    while task.wait(0.1) do
+    while task.wait(0.2) do
         if (_G.LevelFarm or _G.Active_FarmLevel) and not _G.Active_Superhuman and not _G.Active_Sea2 and not _G.Active_AutoRaid then
             pcall(function()
                 Checknhiemvu()
@@ -1612,8 +1648,12 @@ spawn(function()
                         task.wait(0.2)
                     end
 
-                    Tween(CFrameQuest)
-                    if (root.Position - CFrameQuest.Position).Magnitude <= 25 then
+                    local dist = (root.Position - CFrameQuest.Position).Magnitude
+                    if dist > 15 then
+                        Tween(CFrameQuest)
+                    else
+                        CancelTween(true)
+                        root.CFrame = CFrameQuest
                         pcall(function() comm:InvokeServer("StartQuest", NameQuest, NumberQuest) end)
                         task.wait(0.5)
                     end
@@ -1631,11 +1671,14 @@ spawn(function()
                     end
 
                     if targetMob and targetMob:FindFirstChild("HumanoidRootPart") then
-                        -- Treo lơ lửng trên đầu quái 18 studs để né đòn hoàn toàn
                         local holdPos = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 18, 0)
-                        if (root.Position - holdPos.Position).Magnitude > 10 then
+                        PosMon = targetMob.HumanoidRootPart.CFrame
+                        local dist = (root.Position - holdPos.Position).Magnitude
+
+                        if dist > 15 then
                             Tween(holdPos)
                         else
+                            CancelTween(true)
                             root.CFrame = holdPos
                         end
 
@@ -1645,7 +1688,14 @@ spawn(function()
                     else
                         _G.BringMob = false
                         if CFrameMob then
-                            Tween(CFrameMob * CFrame.new(0, 18, 0))
+                            local spawnPos = CFrameMob * CFrame.new(0, 18, 0)
+                            local dist = (root.Position - spawnPos.Position).Magnitude
+                            if dist > 15 then
+                                Tween(spawnPos)
+                            else
+                                CancelTween(true)
+                                root.CFrame = spawnPos
+                            end
                         end
                     end
                 end
@@ -1653,6 +1703,12 @@ spawn(function()
         end
     end
 end)
+
+-- Giữ nguyên function QuestCheck để không bị thiếu hàm của bạn
+function QuestCheck()
+    Checknhiemvu()
+end
+
 -- ================= AUTO BUY ABILITIES & HAKI =================
 local AbilityList = {
     { Name = "Geppo", Price = 10000, ReqLevel = 0, Type = "BuyHaki", Arg = "Geppo" },
